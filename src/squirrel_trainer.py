@@ -15,10 +15,10 @@ class SquirrelYOLOTrainer:
         self.mProjectRoot = Path("yolo_squirrel_project")
         self.mYoloDataSetPath = self.mProjectRoot / "dataset"
 
+        self.mLogger = logging.getLogger(__name__)
         self._setupProjectStructure()
         
         logging.basicConfig(level=logging.INFO)
-        self.mLogger = logging.getLogger(__name__)
 
         self.mModel = None 
 
@@ -39,7 +39,38 @@ class SquirrelYOLOTrainer:
         for tDirectory in tDirectories:
             tDirectory.mkdir(parents=True, exist_ok=True)
 
+        self._createClassesFiles()
         self.mLogger.info(f"Project structure created at {self.mProjectRoot}")
+
+    def _createClassesFiles(self):
+        splits = ['train', 'val', 'test']
+        expected_content = "squirrel\n"
+        
+        for split in splits:
+            classes_file = self.mYoloDataSetPath / split / "labels" / "classes.txt"
+            
+            # Check if file exists and has correct content
+            if classes_file.exists():
+                try:
+                    current_content = classes_file.read_text()
+                    if current_content == expected_content:
+                        self.mLogger.info(f"Classes file already correct: {classes_file}")
+                        continue
+                    else:
+                        self.mLogger.warning(f"Classes file has wrong content, updating: {classes_file}")
+                        self.mLogger.warning(f"  Current: {repr(current_content)}")
+                        self.mLogger.warning(f"  Expected: {repr(expected_content)}")
+                except Exception as e:
+                    self.mLogger.warning(f"Could not read classes file {classes_file}: {e}")
+            
+            # Create or update the file
+            try:
+                classes_file.write_text(expected_content)
+                self.mLogger.info(f"Created/updated classes file: {classes_file}")
+            except Exception as e:
+                self.mLogger.error(f"Failed to write classes file {classes_file}: {e}")
+                # Don't fail completely, just warn
+                continue
 
     def prepareDataSet(self, aTrainSplit=0.7, aValSplit=0.2, aTestSplit=0.1):
         if not self.mDataSetPath.exists():
@@ -47,42 +78,42 @@ class SquirrelYOLOTrainer:
         
         tImageExtensions = ['.jpg', '.jpeg', '.png', '.bmp', '.tiff']
         tImageFiles = []
-
+    
         for tExt in tImageExtensions:
-            tImageFiles.extend(list(self.mDataSetPath.glob(f"{tExt}")))
-            tImageFiles.extend(list(self.mDataSetPath.glob(f"{tExt.upper()}")))
-
+            tImageFiles.extend(list(self.mDataSetPath.glob(f"*{tExt}")))
+            tImageFiles.extend(list(self.mDataSetPath.glob(f"*{tExt.upper()}")))
+    
         if not tImageFiles:
             raise ValueError(f"No Images found in {self.mDataSetPath}")
-
+    
         self.mLogger.info(f"found {len(tImageFiles)} images")
-
+    
         #split 
         tTrainFiles, tTempFiles = train_test_split(tImageFiles, test_size=(1-aTrainSplit), random_state=12)
         tValFiles, tTestFiles = train_test_split(tTempFiles, test_size=(aTestSplit/(aValSplit+aTestSplit)), random_state=12)
-
+    
         tSplits = {
                 'train': tTrainFiles,
                 'val': tValFiles,
                 'test': tTestFiles
         }
-
+    
         for tSplitName, tFiles in tSplits.items():
             self.mLogger.info(f"Processing {tSplitName} set: {len(tFiles)} images")
-
+    
             for tImgFile in tFiles:
                 tDstImg = self.mYoloDataSetPath / tSplitName / "images" / tImgFile.name 
                 shutil.copy2(tImgFile, tDstImg)
-
+    
                 tLabelName = tImgFile.stem + ".txt"
                 tLabelFile = self.mYoloDataSetPath / tSplitName / "labels" / tLabelName
                 tLabelFile.touch()
-
-            self.mLogger.info("Dataset preparation complete")
-            self.mLogger.warning("Remember to annotate the images for training")
-
-            return len(tTrainFiles), len(tValFiles), len(tTestFiles)
-
+    
+        self.mLogger.info("Dataset preparation complete")
+        self.mLogger.warning("Remember to annotate the images for training")
+    
+        return len(tTrainFiles), len(tValFiles), len(tTestFiles)
+    
     def createDataSetYaml(self):
         tYamlContent = {
                 'path': str(self.mYoloDataSetPath.absolute()),
@@ -97,7 +128,7 @@ class SquirrelYOLOTrainer:
         with open(tYamlFile, 'w') as tFile:
             yaml.dump(tYamlContent, tFile, default_flow_style=False)
 
-        self.mLogger.info(f"Dataset YAMEL created {tYamlFile}")
+        self.mLogger.info(f"Dataset YAML created {tYamlFile}")
         return tYamlFile
 
     def checkAnnotations(self):
@@ -107,6 +138,9 @@ class SquirrelYOLOTrainer:
         for tSplit in tSplits:
             tLabelDir = self.mYoloDataSetPath / tSplit / "labels"
             tLabelFiles = list(tLabelDir.glob("*.txt"))
+            
+            # Filter out classes.txt from the count
+            tLabelFiles = [f for f in tLabelFiles if f.name != "classes.txt"]
 
             tAnnotatedCount = 0 
             for tLabelFile in tLabelFiles:
@@ -118,18 +152,29 @@ class SquirrelYOLOTrainer:
                 'annotated': tAnnotatedCount,
                 'empty': len(tLabelFiles) - tAnnotatedCount
             }
+        
         self.mLogger.info("annotation status: ")
         for tSplit, tStats in tAnnotationStats.items():
             self.mLogger.info(f"    {tSplit}: {tStats['annotated']}/{tStats['total']} annotated")
 
         return tAnnotationStats
-    
+
     def loadModel(self):
         self.mModel = YOLO(self.mModelVariant)
         self.mLogger.info(f"Loaded {self.mModelVariant} model")
         return self.mModel
 
-    def trainModel(self, aEpochs=100, aImgsz=640, aBatch=16, aDevice='auto', **aKwargs):
+    def trainModel(self, epochs=100, imgsz=640, batch=16, device='auto', **kwargs):
+        """
+        Train the YOLO model with proper parameter names
+        
+        Args:
+            epochs: Number of training epochs
+            imgsz: Input image size 
+            batch: Batch size
+            device: Device to use ('auto', 'cpu', 'cuda', etc.)
+            **kwargs: Additional YOLO training parameters
+        """
         if self.mModel is None:
             self.loadModel()
 
@@ -140,22 +185,23 @@ class SquirrelYOLOTrainer:
         tStats = self.checkAnnotations()
         tTotalAnnotated = sum(tS['annotated'] for tS in tStats.values())
 
-        if totalAnnotated == 0:
+        if tTotalAnnotated == 0:
             raise ValueError("No annotated images found, please annotate them first")
 
-        self.mLogger.info(f"Starting training {tTotalAnnotated} annotated images")
+        self.mLogger.info(f"Starting training with {tTotalAnnotated} annotated images")
 
+        # Use correct YOLO parameter names
         tTrainArgs = {
             'data': str(tYamlFile),
-            'epochs': aEpochs,
-            'imgsz': aImgsz,
-            'batch': aBatch,
-            'device': aDevice,
+            'epochs': epochs,
+            'imgsz': imgsz,
+            'batch': batch,
+            'device': device,
             'project': str(self.mProjectRoot / "runs"),
             'name': 'squirrel_detection',
-            'save_period': 10, #save checkpoint every 10 epochs 
-            'patience': 50, #early stopping patience 
-            **aKwargs
+            'save_period': 10,  # save checkpoint every 10 epochs 
+            'patience': 50,     # early stopping patience 
+            **kwargs
         }
 
         tResults = self.mModel.train(**tTrainArgs)
