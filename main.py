@@ -197,7 +197,7 @@ def main():
         print(f"✅ Found {total_annotated} annotated images. Starting training...")
         
         results = trainer.trainModel(
-            epochs=100,          # Full training epochs
+            epochs=50,          # Full training epochs
             imgsz=640,
             batch=8,
             device='cpu',

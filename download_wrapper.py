@@ -351,7 +351,7 @@ def main():
             return
             
         count = downloader.create_empty_labels(split)
-        print(f"✅ Ready for annotation in {split} set!"): python main.py")
+        print(f"✅ Ready for annotation in {split} set!")
             
     elif command == "download":
         if len(sys.argv) < 4:
